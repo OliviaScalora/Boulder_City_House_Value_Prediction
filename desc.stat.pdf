@@ -1,0 +1,25 @@
+
+<table style="text-align:center"><caption><strong>Table 1: Descriptive Statistics for Boulder Homes</strong></caption>
+<tr><td colspan="8" style="border-bottom: 1px solid black"></td></tr><tr><td style="text-align:left">Statistic</td><td>N</td><td>Mean</td><td>St. Dev.</td><td>Min</td><td>Pctl(25)</td><td>Pctl(75)</td><td>Max</td></tr>
+<tr><td colspan="8" style="border-bottom: 1px solid black"></td></tr><tr><td style="text-align:left">price</td><td>11,263</td><td>746,382.6</td><td>543,873.5</td><td>10,000.0</td><td>452,700.0</td><td>831,320.5</td><td>7,350,000.0</td></tr>
+<tr><td style="text-align:left">bsmtSF</td><td>11,363</td><td>743.8</td><td>627.4</td><td>0</td><td>134</td><td>1,125</td><td>4,534</td></tr>
+<tr><td style="text-align:left">carStorageSF</td><td>11,363</td><td>471.9</td><td>235.9</td><td>0</td><td>380</td><td>600</td><td>3,040</td></tr>
+<tr><td style="text-align:left">nbrBedRoom</td><td>11,363</td><td>3.4</td><td>1.1</td><td>0</td><td>3</td><td>4</td><td>24</td></tr>
+<tr><td style="text-align:left">TotalFinishedSF</td><td>11,363</td><td>1,955.5</td><td>892.6</td><td>0</td><td>1,276</td><td>2,443.5</td><td>10,188</td></tr>
+<tr><td style="text-align:left">NumTrailHeads</td><td>11,363</td><td>6.9</td><td>7.2</td><td>0</td><td>2</td><td>9</td><td>42</td></tr>
+<tr><td style="text-align:left">wildfire.nn</td><td>11,363</td><td>12,023.0</td><td>5,201.8</td><td>1,006.3</td><td>7,572.6</td><td>16,330.5</td><td>20,816.9</td></tr>
+<tr><td style="text-align:left">geohazard.nn</td><td>11,363</td><td>6,465.7</td><td>3,594.5</td><td>150.0</td><td>3,623.3</td><td>9,591.9</td><td>13,438.7</td></tr>
+<tr><td style="text-align:left">lakes.nn</td><td>11,363</td><td>1,940.6</td><td>901.3</td><td>335.4</td><td>1,394.8</td><td>2,267.1</td><td>7,299.7</td></tr>
+<tr><td style="text-align:left">floodzone.nn</td><td>11,363</td><td>3,012.2</td><td>2,058.3</td><td>266.5</td><td>1,616.8</td><td>3,709.5</td><td>17,553.6</td></tr>
+<tr><td style="text-align:left">Ag.nn</td><td>11,363</td><td>3,835.5</td><td>4,043.1</td><td>314.6</td><td>1,596.8</td><td>4,508.6</td><td>29,710.4</td></tr>
+<tr><td style="text-align:left">Industrial.nn</td><td>11,363</td><td>5,243.5</td><td>3,783.0</td><td>532.7</td><td>3,148.0</td><td>6,084.5</td><td>29,351.7</td></tr>
+<tr><td style="text-align:left">Business.nn</td><td>11,363</td><td>6,266.5</td><td>1,979.7</td><td>105.5</td><td>5,015.0</td><td>7,268.8</td><td>21,185.4</td></tr>
+<tr><td style="text-align:left">MedHHInc</td><td>11,363</td><td>97,723.0</td><td>25,090.3</td><td>23,699</td><td>82,398</td><td>120,717</td><td>173,500</td></tr>
+<tr><td style="text-align:left">MedRent</td><td>11,363</td><td>1,541.9</td><td>403.9</td><td>745</td><td>1,275</td><td>1,733</td><td>3,000</td></tr>
+<tr><td style="text-align:left">BelPov100</td><td>11,363</td><td>482.5</td><td>393.3</td><td>40</td><td>227</td><td>724</td><td>3,202</td></tr>
+<tr><td style="text-align:left">TotalBach</td><td>11,363</td><td>1,467.7</td><td>757.2</td><td>227</td><td>899</td><td>1,766</td><td>3,213</td></tr>
+<tr><td style="text-align:left">TravelTime</td><td>11,363</td><td>71,130.4</td><td>38,236.1</td><td>13,635</td><td>46,945</td><td>84,165</td><td>166,290</td></tr>
+<tr><td style="text-align:left">PctWhite</td><td>11,363</td><td>0.9</td><td>0.1</td><td>0.8</td><td>0.9</td><td>0.9</td><td>3.3</td></tr>
+<tr><td style="text-align:left">PctMarried</td><td>11,363</td><td>1.5</td><td>0.7</td><td>0.1</td><td>1.0</td><td>2.0</td><td>4.3</td></tr>
+<tr><td style="text-align:left">HouseAge</td><td>11,363</td><td>33.8</td><td>26.8</td><td>0</td><td>15</td><td>49</td><td>161</td></tr>
+<tr><td colspan="8" style="border-bottom: 1px solid black"></td></tr></table>

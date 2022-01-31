@@ -1,0 +1,162 @@
+
+Table 2: LM of Training Data
+=================================================================
+                                          Dependent variable:    
+                                      ---------------------------
+                                                LNprice          
+-----------------------------------------------------------------
+MedRent                                        0.000***          
+                                                (0.000)          
+                                                                 
+HouseAge                                       0.002***          
+                                                (0.000)          
+                                                                 
+PctMarried                                      -0.1***          
+                                                (0.01)           
+                                                                 
+BelPov100                                      0.000***          
+                                                (0.000)          
+                                                                 
+wildfire.nn                                    -0.000***         
+                                                (0.000)          
+                                                                 
+geohazard.nn                                   -0.000***         
+                                                (0.000)          
+                                                                 
+LNlakes.nn                                      0.03***          
+                                                (0.01)           
+                                                                 
+floodzone.nn                                   -0.000***         
+                                                (0.000)          
+                                                                 
+Ag.nn                                          -0.000***         
+                                                (0.000)          
+                                                                 
+Business.nn                                    0.000***          
+                                                (0.000)          
+                                                                 
+Industrial.nn                                   -0.000           
+                                                (0.000)          
+                                                                 
+NumTrailHeads                                   0.01***          
+                                                (0.001)          
+                                                                 
+bsmtSF                                         0.000***          
+                                                (0.000)          
+                                                                 
+HeatingDscrElectric                              0.03            
+                                                (0.04)           
+                                                                 
+HeatingDscrElectric Wall Heat (1500W)             0.2            
+                                                 (0.2)           
+                                                                 
+HeatingDscrForced Air                            0.04            
+                                                (0.04)           
+                                                                 
+HeatingDscrGravity                                0.1            
+                                                 (0.1)           
+                                                                 
+HeatingDscrHeat Pump                             -0.04           
+                                                 (0.1)           
+                                                                 
+HeatingDscrHot Water                            0.1***           
+                                                (0.04)           
+                                                                 
+HeatingDscrNo HVAC                              0.6***           
+                                                 (0.2)           
+                                                                 
+HeatingDscrPackage Unit                          -0.3            
+                                                 (0.3)           
+                                                                 
+HeatingDscrRadiant Floor                        0.2***           
+                                                 (0.1)           
+                                                                 
+HeatingDscrVentilation Only                     -0.9***          
+                                                 (0.3)           
+                                                                 
+HeatingDscrWall Furnace                          0.1*            
+                                                 (0.1)           
+                                                                 
+TotalBach                                      0.000***          
+                                                (0.000)          
+                                                                 
+MedHHInc                                       0.000***          
+                                                (0.000)          
+                                                                 
+TravelTime                                     -0.000***         
+                                                (0.000)          
+                                                                 
+nbrBedRoom                                      0.02***          
+                                                (0.004)          
+                                                                 
+qualityCodeDscrAVERAGE +                        0.1***           
+                                                (0.02)           
+                                                                 
+qualityCodeDscrAVERAGE ++                       0.1***           
+                                                (0.02)           
+                                                                 
+qualityCodeDscrEXCELLENT                        0.8***           
+                                                (0.04)           
+                                                                 
+qualityCodeDscrEXCELLENT +                      0.9***           
+                                                 (0.1)           
+                                                                 
+qualityCodeDscrEXCELLENT++                      1.0***           
+                                                 (0.1)           
+                                                                 
+qualityCodeDscrEXCEPTIONAL 1                    0.8***           
+                                                 (0.1)           
+                                                                 
+qualityCodeDscrEXCEPTIONAL 2                    0.9***           
+                                                 (0.2)           
+                                                                 
+qualityCodeDscrFAIR                             -0.3***          
+                                                (0.04)           
+                                                                 
+qualityCodeDscrGOOD                             0.2***           
+                                                (0.01)           
+                                                                 
+qualityCodeDscrGOOD +                           0.2***           
+                                                (0.02)           
+                                                                 
+qualityCodeDscrGOOD ++                          0.3***           
+                                                (0.02)           
+                                                                 
+qualityCodeDscrLOW                              -1.1***          
+                                                 (0.1)           
+                                                                 
+qualityCodeDscrVERY GOOD                        0.4***           
+                                                (0.02)           
+                                                                 
+qualityCodeDscrVERY GOOD +                      0.6***           
+                                                (0.03)           
+                                                                 
+qualityCodeDscrVERY GOOD ++                     0.6***           
+                                                (0.03)           
+                                                                 
+TotalFinishedSF                                0.000***          
+                                                (0.000)          
+                                                                 
+designCodeDscr2-3 Story                         -0.1***          
+                                                (0.01)           
+                                                                 
+designCodeDscrBi-level                           0.03            
+                                                (0.02)           
+                                                                 
+designCodeDscrMULTI STORY- TOWNHOUSE            -0.3***          
+                                                (0.01)           
+                                                                 
+designCodeDscrSplit-level                       0.03**           
+                                                (0.01)           
+                                                                 
+Constant                                        12.7***          
+                                                 (0.1)           
+                                                                 
+-----------------------------------------------------------------
+Observations                                     6,853           
+R2                                                0.7            
+Adjusted R2                                       0.7            
+Residual Std. Error                         0.3 (df = 6804)      
+F Statistic                            348.4*** (df = 48; 6804)  
+=================================================================
+Note:                                 *p<0.1; **p<0.05; ***p<0.01

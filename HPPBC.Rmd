@@ -1,0 +1,1201 @@
+---
+title: "Housing Price Prediction - Boulder City"
+author: "Hasa Reddy, Olivia Scalora"
+date: "10/23/2021"
+output:
+  html_document:
+    toc: true 
+    toc_float: true 
+    toc_depth: 6
+    theme: readable
+    css: style.css
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+***
+## **I. Introduction**
+
+Boulder County is located in state of Colorado and its estimated population as of 2019 was just over 326,000 according to the US Census. The county is surrounded by mountains in the west, plains in the east and natural trough that runs between the plains and foothills. With visionary open space, land use and sustainability policies to forward-thinking and compassionate human services programs. Boulder is known for its public schools and safe neighborhoods, making its housing maker desirable. The county has one of the best and most stable housing markets despite only 48% home ownership. Even with contrasting property tax at 0.61%, and median income higher than the national average, the cost of living is higher than most US cities and its considered on of the most desirable places to live in. How then, with this information, can we predict the housing market? This analysis pulls relevant open source data from Boulder's Open Data portal and Tigris in attempt to build an optimized predictive model using Ordinary Least Squares (OLS) regression. 
+
+***
+## **II. Data**
+
+To start off, we collect and trim the data from various sources to best suit our projections. From the Census American Community Survey, we download demographic data at the tract level. We pull median income, median rent, population living bellow poverty line, percent married householders, population count with a bachelors degree, aggregate travel time to work per tracts, and percent white population. Along with the census features, we will be using proximity to trailheads, business, commercial, historical wildfire data, lakes and reservoirs, areas of flooding etc to understand the correlation between sales price of housing and these features. We expect both positive and negative correlations from these demographic and geographic predictors. We will be using this data to rank or appropriate the cost of housing depending on its proximity to these features. For example, a house close to a trailhead indicates proximity to recreation and we would expect higher house value as opposed to a house which is located in or near a flood zone.
+
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE)
+
+#Setup Install Libraries
+library(tidycensus)
+library(tigris)
+library(kableExtra)
+library(ggplot2)
+library(tidyverse)
+library(sf)
+library(spdep)
+library(caret)
+library(ckanr)
+library(FNN)
+library(grid)
+library(gridExtra)
+library(ggcorrplot)
+library(ggmap)
+library(stargazer)
+library(geosphere)
+library(scales)
+library(hrbrthemes)
+
+
+
+root.dir = "https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/"
+
+source("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/functions.r")
+
+options(scipen=999)
+options(tigris_class = "sf")
+options(tigris_use_cache = TRUE)
+
+qBr <- function(df, variable, rnd) {
+  if (missing(rnd)) 
+    as.character(quantile(round(df[[variable]],0),
+                          c(.01,.2,.4,.6,.8), na.rm=T))
+  else if (rnd == FALSE | rnd == F) 
+    as.character(formatC(quantile(df[[variable]],
+                                  c(.01,.2,.4,.6,.8), na.rm=T), digits = 3))}
+
+
+q5 <- function(variable) {
+  as.factor(ntile(variable, 5))}
+
+mapTheme <- function(base_size = 12) {
+  theme(
+    text = element_text( color = "black"),
+    plot.title = element_text(size = 16,colour = "black"),
+    plot.subtitle=element_text(face="italic"),
+    plot.caption=element_text(hjust=0),
+    axis.ticks = element_blank(),
+    panel.background = element_blank(),axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(colour = "black", fill=NA, size=2),
+    strip.text.x = element_text(size = 14)
+  )
+}
+
+
+plotTheme <- function(base_size = 12) {
+  theme(
+    text = element_text( color = "black"),
+    plot.title = element_text(size = 16,colour = "black"),
+    plot.subtitle = element_text(face="italic"),
+    plot.caption = element_text(hjust=0),
+    axis.ticks = element_blank(),
+    panel.background = element_blank(),
+    panel.grid.major = element_line("grey80", size = 0.1),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(colour = "black", fill=NA, size=2),
+    strip.background = element_rect(fill = "grey80", color = "white"),
+    strip.text = element_text(size=12),
+    axis.title = element_text(size=12),
+    axis.text = element_text(size=10),
+    plot.background = element_blank(),
+    legend.background = element_blank(),
+    legend.title = element_text(colour = "black", face = "italic"),
+    legend.text = element_text(colour = "black", face = "italic"),
+    strip.text.x = element_text(size = 14)
+  )
+}
+
+
+paletteMap <- c("#DBE9F5", "#AFC6D9", "#83A3BE", "#5880A2", "#003A6B")
+palette5 <- c("#25CB10", "#5AB60C", "#8FA108",   "#C48C04", "#FA7800")
+```
+
+```{r load.manipulte.data, results='hide', message=FALSE, warning=FALSE}
+#Load Student Data
+StudentData <- st_read("studentData.geojson",crs = 'ESRI:102254')%>%
+  st_transform('EPSG:26913')
+
+#CENSUS
+census_api_key("3909c4b14d693e1a81c3e86c9cfc3b22fc112324", overwrite = TRUE, install = TRUE)
+
+#Call Census Variables
+#Median Income - B19013_001 
+#Median Rent - B25058_001 
+#Total Below 100 percent poverty level - B06012_002 
+#Total Married Couple Households - B11012_002
+#Total Unmarried Female Householder - B11012_008
+#Total Unmarried Male Householder - B11012_013
+#Total With a Bachelors Degree - B15003_022
+#Aggregate Travel Time to Work per tracts -B08013_001
+#Total Population - B25026_001 
+#Total Race - White - B02001_002, Black - B02001_003
+
+tracts19 <- { 
+  get_acs(geography = "tract", variables = c("B19013_001E", "B25058_001E", "B06012_002E",
+                                             "B15003_022E", "B08013_001E", "B25026_001E",
+                                             "B02001_002E", "B02001_003E", "B11012_002E",
+                                             "B11012_008E", "B11012_013E"), 
+          state='CO', county='Boulder County', geometry=T, output = "wide") %>% 
+    st_transform('EPSG:26913')%>%
+    dplyr::select( -NAME,-B19013_001M,-B25058_001M,-B06012_002M,
+                   -B15003_022M,-B08013_001M,-B25026_001M,
+                   -B02001_002M, -B02001_003M, -B11012_002M,
+                   -B11012_008M, -B11012_013M)%>%
+    rename(MedHHInc = B19013_001E, 
+           MedRent = B25058_001E,
+           BelPov100 = B06012_002E,
+           TotalBach = B15003_022E,
+           TravelTime = B08013_001E,
+           TotalPop = B25026_001E, 
+           TotalWhite = B02001_002E)%>%
+    mutate(PctWhite = round((TotalWhite /TotalPop),2),
+           PctMarried = round(B11012_002E/(B11012_008E + B11012_013E),2))%>%
+    dplyr::select(-B11012_008E,-B11012_013E, -B02001_003E, -B11012_002E)}
+
+#TRAILHEAD DATA
+Trailhead <- st_read("Boulder_Area_Trailheads.geojson",crs = 'EPSG:4326')%>%
+  st_transform('EPSG:26913')%>%
+  dplyr::select(OBJECTID,THNAME,geometry)
+#Create column which counts how many trailheads are within 1/2 mi from each home sale
+StudentData <- StudentData%>%
+  mutate(NumTrailHeads =(st_buffer(StudentData, 2640) %>% 
+                        aggregate(mutate((Trailhead%>%
+                dplyr::select(geometry)), counter = 1),.,sum)%>%pull(counter)))
+StudentData$NumTrailHeads[is.na(StudentData$NumTrailHeads)] <- 0
+#WILDFIRE HISTORY 
+Wildfire_History <-  st_read("Wildfire_History.geojson",crs = 'EPSG:4326')%>%
+  st_transform('EPSG:26913')%>%
+  dplyr::select(OBJECTID, NAME, geometry)
+
+#create 1/4 mile buffer intervals
+ wf_buffer_25 <- 
+  st_union(st_buffer(Wildfire_History, 1320)) %>% st_sf() %>%
+  mutate(Legend = "Wildfire Buffer")
+ wf_buffer_5 <- 
+   st_union(st_buffer(Wildfire_History, 2640)) %>% st_sf() %>%
+   mutate(Legend = "Wildfire Buffer")
+ wf_buffer_75 <- 
+   st_union(st_buffer(Wildfire_History, 3690)) %>% st_sf() %>%
+   mutate(Legend = "Wildfire Buffer")
+ wf_buffer_1 <- 
+   st_union(st_buffer(Wildfire_History, 5280)) %>% st_sf() %>%
+   mutate(Legend = "Wildfire Buffer")
+#create wildfire_risk column 1 if within 1/2 mi. 0 if not
+#StudentData <- {
+#  StudentData[wildfire_buffer,] %>%
+#    st_drop_geometry() %>%
+#    mutate(wildfire_risk = 1,
+#           wildfire_risk = replace_na(wildfire_risk,0))%>%
+#    full_join(StudentData)%>%
+#    st_sf()}
+#StudentData$wildfire_risk[is.na(StudentData$wildfire_risk)] <- 0
+
+#GEOHAZARD RISK
+GeoHazard <-  st_read("Geological_Hazard_Corridor.geojson", crs = 'EPSG:4326')%>%
+  st_transform('EPSG:26913')%>%
+  dplyr::select(OBJECTID, geometry)
+
+#Identify home sales that are within a quarter mile of 
+#geological hazard reports 
+#geohazard_buffer <-   
+#  st_union(st_buffer(GeoHazard, 1320)) %>%
+#  st_sf() %>%
+#  mutate(Legend = "GeoHazard Buffer")
+
+geo_buffer_25 <- 
+  st_union(st_buffer(GeoHazard, 1320)) %>% st_sf() %>%
+  mutate(Legend = "GeoHazardBuffer")
+geo_buffer_5 <- 
+  st_union(st_buffer(GeoHazard, 2640)) %>% st_sf() %>%
+  mutate(Legend = "GeoHazardBuffer")
+geo_buffer_75 <- 
+  st_union(st_buffer(GeoHazard, 3690)) %>% st_sf() %>%
+  mutate(Legend = "GeoHazard Buffer")
+geo_buffer_1 <- 
+  st_union(st_buffer(GeoHazard, 5280)) %>% st_sf() %>%
+  mutate(Legend = "GeoHazardBuffer")
+#create geohazard_risk column 1 if within 1/4 mi. 0 if not
+#StudentData <- {
+#  StudentData[geohazard_buffer,] %>%
+#    st_drop_geometry() %>%
+#    mutate(geohazard_risk = 1,
+#           geohazard_risk = replace_na(geohazard_risk,0))%>%
+#    full_join(StudentData)%>%
+#    st_sf()}
+
+#STREAMS 
+#Streams <- st_read("onlynaturalstreams.geojson",crs = 'EPSG:4326')%>%
+#  st_transform('EPSG:26913')%>% drop_na()
+
+#Identify home sales that are within a quarter of streams
+#Streams_buffer <-   
+#  st_union(st_buffer(Streams, 1320)) %>%
+#  st_sf() %>%
+#  mutate(Legend = "Streams Buffer")
+
+#create stream_proximity column 1 if within 1/4 mi. 0 if not
+#StudentData <- {
+#  StudentData[Streams_buffer,] %>%
+#    st_drop_geometry() %>%
+#    mutate(stream_proximity = 1,
+#    stream_proximity = replace_na(stream_proximity,0))%>%
+#    full_join(StudentData)%>%
+#    st_sf()}
+
+#LAKES AND RESERVOIRS 
+Lakes_Reservoir <- st_read("Lakes_and_Reservoirs.geojson",crs = 'EPSG:4326')%>%
+  st_transform('EPSG:26913')%>%
+  dplyr::select(FeatureType, Acreage, geometry)%>%
+  filter(Acreage>=1)
+
+#identify home sales within quarter mile of a lake or reservoir that is 
+#larger than 1 acre
+lake_buffer_25 <- 
+  st_union(st_buffer(Lakes_Reservoir, 1320)) %>% st_sf() %>%
+  mutate(Legend = "LakeBuffer")
+lake_buffer_5 <- 
+  st_union(st_buffer(Lakes_Reservoir, 2640)) %>% st_sf() %>%
+  mutate(Legend = "LakeBuffer")
+lake_buffer_75 <- 
+  st_union(st_buffer(Lakes_Reservoir, 3690)) %>% st_sf() %>%
+  mutate(Legend = "LakeBuffer")
+lake_buffer_1 <- 
+  st_union(st_buffer(Lakes_Reservoir, 5280)) %>% st_sf() %>%
+  mutate(Legend = "LakeBuffer")
+#create lake proximity column
+#StudentData <- {
+#  StudentData[lake_buffer,] %>%
+#    st_drop_geometry() %>%
+#    mutate(lake_proximity = 1,
+#           lake_proximity = replace_na(lake_proximity,0))%>%
+#    full_join(StudentData)%>%
+#    st_sf()}
+
+#FLOOD ZONE
+FloodZone <- st_read("Flood_Areas.geojson",crs = 'EPSG:4326')%>%
+  st_transform('EPSG:26913')%>%
+  dplyr::select(OBJECTID, geometry)
+
+#identify home sales within quarter mile of a flood event
+#FloodZone_buffer <-
+#  st_union(st_buffer(FloodZone, 1320)) %>%
+#  st_sf() %>%
+#  mutate(Legend = "Flood Buffer")
+fl_buffer_25 <- 
+  st_union(st_buffer(FloodZone, 1320)) %>% st_sf() %>%
+  mutate(Legend = "FloodZone")
+fl_buffer_5 <- 
+  st_union(st_buffer(FloodZone, 2640)) %>% st_sf() %>%
+  mutate(Legend = "FloodZone")
+fl_buffer_75 <- 
+  st_union(st_buffer(FloodZone, 3690)) %>% st_sf() %>%
+  mutate(Legend = "FloodZone")
+fl_buffer_1 <- 
+  st_union(st_buffer(FloodZone, 5280)) %>% st_sf() %>%
+  mutate(Legend = "FloodZone")
+
+#create flood proximity column
+#StudentData <- {
+#  StudentData[FloodZone_buffer,] %>%
+#    st_drop_geometry() %>%
+#    mutate(flood_risk = 1,
+#           flood_risk = replace_na(flood_risk,0))%>%
+#    full_join(StudentData)%>%
+#    st_sf()}
+
+# Business + Commercial 
+Business <- st_read("Zoning_Districts.geojson",crs = 'EPSG:4326')%>%
+  st_transform('EPSG:26913')%>%
+  filter(ZONEDESC =='Business')%>%
+  dplyr::select(geometry, ZONEDESC)
+Commercial <- st_read("Zoning_Districts.geojson",crs = 'EPSG:4326')%>%
+  st_transform('EPSG:26913')%>%
+  filter(ZONEDESC =='Commercial')%>%
+  dplyr::select(geometry, ZONEDESC)
+BusinessCommercial <- rbind(Business, Commercial)
+
+BC_buffer_25 <- 
+  st_union(st_buffer(BusinessCommercial, 1320)) %>% st_sf() %>%
+  mutate(Legend = "Business Buffer")
+BC_buffer_5 <- 
+  st_union(st_buffer(BusinessCommercial, 2640)) %>% st_sf() %>%
+  mutate(Legend = "Business Buffer")
+BC_buffer_75 <- 
+  st_union(st_buffer(BusinessCommercial, 3690)) %>% st_sf() %>%
+  mutate(Legend = "Business Buffer")
+BC_buffer_1 <- 
+  st_union(st_buffer(BusinessCommercial, 5280)) %>% st_sf() %>%
+  mutate(Legend = "Business Buffer")
+
+#general Industrial
+Industrial1 <- st_read("Zoning_Districts.geojson",crs = 'EPSG:4326')%>%
+  st_transform('EPSG:26913')%>%
+  filter(ZONEDESC =='General Industrial')%>%
+  dplyr::select(geometry, ZONEDESC)
+Industrial2 <- st_read("Zoning_Districts.geojson",crs = 'EPSG:4326')%>%
+  st_transform('EPSG:26913')%>%
+  filter(ZONEDESC =='Light Industrial')%>%
+  dplyr::select(geometry, ZONEDESC)
+Industrial <- rbind(Industrial1, Industrial2)
+
+I_buffer_25 <- 
+  st_union(st_buffer(Industrial, 1320)) %>% st_sf() %>%
+  mutate(Legend = "Industrial Buffer")
+I_buffer_5 <- 
+  st_union(st_buffer(Industrial, 2640)) %>% st_sf() %>%
+  mutate(Legend = "Industrial Buffer")
+I_buffer_75 <- 
+  st_union(st_buffer(Industrial, 3690)) %>% st_sf() %>%
+  mutate(Legend = "Industrial Buffer")
+I_buffer_1 <- 
+  st_union(st_buffer(Industrial, 5280)) %>% st_sf() %>%
+  mutate(Legend = "Industrial Buffer")
+
+#Agriculture
+Ag <-  st_read("Zoning_Districts.geojson",crs = 'EPSG:4326')%>%
+  st_transform('EPSG:26913')%>%
+  filter(ZONEDESC =='Agricultural')%>%
+  dplyr::select(geometry, ZONEDESC)
+
+AG_buffer_25 <- 
+  st_union(st_buffer(Ag, 1320)) %>% st_sf() %>%
+  mutate(Legend = "AG Buffer")
+AG_buffer_5 <- 
+  st_union(st_buffer(Ag, 2640)) %>% st_sf() %>%
+  mutate(Legend = "AG Buffer")
+AG_buffer_75 <- 
+  st_union(st_buffer(Ag, 3690)) %>% st_sf() %>%
+  mutate(Legend = "AG Buffer")
+AG_buffer_1 <- 
+  st_union(st_buffer(Ag, 5280)) %>% st_sf() %>%
+  mutate(Legend = "AG Buffer")
+
+Zoning <- st_read("Zoning_Districts.geojson",crs = 'EPSG:4326')%>%
+  st_transform('EPSG:26913')
+
+```
+##### **Exploratory analysis **
+
+Our raw data is pulled in and manipulated appropriately to accurately reflect each variables relationship to the home sale price. We first count the number of trailheads within a 1/2 mile buffer of each home sale. This count becomes a feature in our predictive model. We next use the nearest neighbor function to calculate average distance between a home sales 5 nearest neighbors to respective features i.e. historical wildfire sites, historical geological hazard sites, flood zones, lakes and reservoirs, and types of zoning such as agricultural, commercial and industrial. A lower mean of the nearest neighbor variables indicates closer proximity of house sales to these features (table 1).
+
+```{r manipulate.data.2, results='hide', message=FALSE, warning=FALSE}
+#NEAREST NEIGHBOR FUNCTION
+st_c <- st_coordinates
+StudentData <-
+  StudentData %>%
+  mutate(
+    wildfire.nn = nn_function(st_c(st_centroid(StudentData)),st_c(st_centroid(Wildfire_History)), 5),
+    geohazard.nn = nn_function(st_c(st_centroid(StudentData)),st_c(st_centroid(GeoHazard)), 5),
+    lakes.nn = nn_function(st_c(st_centroid(StudentData)),st_c(st_centroid(Lakes_Reservoir)),5),
+    floodzone.nn = nn_function(st_c(st_centroid(StudentData)),st_c(st_centroid(FloodZone)),5),
+    Ag.nn = nn_function(st_c(st_centroid(StudentData)),st_c(st_centroid(Ag)),5),
+    Industrial.nn = nn_function(st_c(st_centroid(StudentData)),st_c(st_centroid(Industrial)),5), 
+    Business.nn = nn_function(st_c(st_centroid(StudentData)),st_c(st_centroid(BusinessCommercial)),5))
+
+#Join ACS data to StudentData
+StudentData <-
+  st_join(StudentData, tracts19)
+
+#Air Condition Categories
+StudentData$AcDscr[is.na(StudentData$Ac)] <- 'No AC'
+
+#age 
+StudentData <-
+  StudentData %>%
+  mutate(HouseAge = ifelse(is.na(builtYear), 0, (2021 - builtYear)))
+
+#car storage space
+StudentData$carStorageSF[is.na(StudentData$carStorageSF)] <- 0
+StudentData <-
+  StudentData %>%
+  mutate(carStorage = case_when(
+    carStorageSF == 0     ~ "No car Storage",
+    carStorageSF> 0 & carStorageSF< 1000 ~ "Small",
+    carStorageSF >= 2000 ~ "Large"))
+
+
+#home sale has $3 million with low square footage - determine to be data entry mistake
+#omit outlier data observation 
+StudentData <-StudentData %>%
+  filter(!MUSA_ID == '8735')
+
+#Clean Up data set to include only variables of interest
+HouseData<- StudentData %>%
+  dplyr::select(-year_quarter,-address,-bld_num,-section_num,-bldgClass,-bldgClassDscr,-ConstCode,-ConstCodeDscr,
+         -builtYear,-CompCode,-EffectiveYear,-bsmtType,-bsmtTypeDscr,-carStorageType,-carStorageTypeDscr,-Ac,
+         -ExtWallDscrSec,-ExtWallSec, -IntWall, -Roof_Cover,-Roof_CoverDscr,-Stories,-UnitCount,-status_cd)
+
+HouseDataDescr <- HouseData %>%
+  dplyr::select("price", "designCodeDscr", "qualityCodeDscr", "bsmtSF", "carStorageSF", "nbrBedRoom", 
+                "TotalFinishedSF","AcDscr", "HeatingDscr", "NumTrailHeads","wildfire.nn","geohazard.nn",
+                "lakes.nn","floodzone.nn","Ag.nn","Industrial.nn","Business.nn", "MedHHInc", "MedRent",
+                "BelPov100", "TotalBach","TravelTime","PctWhite","PctMarried","HouseAge")%>%
+  st_drop_geometry()
+```
+
+```{r Data.Description.Table, message=FALSE, warning=FALSE}
+stargazer(as.data.frame(HouseDataDescr),
+          type="text",
+          digits=1,
+          header = FALSE,
+          single.row = TRUE,
+          title="Table 1: Descriptive Statistics for Boulder Homes")
+```
+
+```{r correlation.matrix, results='hide', message=FALSE, warning=FALSE}
+
+corrPlotVars <- HouseData %>%
+  dplyr::select(-saleDate, -year, -designCode, -qualityCode,-HeatingDscr,
+                -ExtWallDscrPrim, -IntWallDscr, -MUSA_ID, -toPredict,-GEOID,
+                -TotalPop, -TotalWhite)
+
+numericVars <-
+  select_if(st_drop_geometry(corrPlotVars), is.numeric) %>% 
+  na.omit()
+
+correlation.matrix <- cor(numericVars)
+
+stargazer(correlation.matrix, 
+          type="text", 
+          title="Correlation Matrix of Predictive Variables for Boulder Homes", 
+          caption = 'table 2', 
+          out = "correlation.matrix.txt")
+
+```
+
+##### **Correlation across numeric variables**
+
+The purpose of Linear OLS Regression is to predict the sale price in relation to various features. It helps use to understand which of the feature have a positive and which have a negative correlation to the sale price. While OLS does not account for the spatial condition of our dependent variable, we will be using this regression for the purpose of this analysis, and generate features that may account for the spatial aspect of our data in a latter part of this analysis. Correlation is an important form of exploratory analysis, identifying features that may be useful for predicting sale price. In this section, correlation is visualized and estimated. The correlation matrix (Figure. 1) below is a good first look at the relationship between our dependent variable, sale price, and our predictive variables. This plot also gives us an understanding of the predictive variables relationships to themselves. We are looking out for multicollinearity, where two predictive features are highly correlated to each other, in which case we should choose one to put in the model to avoid unstable regression coefficients and overfitting. 
+
+```{r corrplot, message=FALSE, warning=FALSE, fig.width = 12, fig.height=12 }
+ggcorrplot(
+  round(cor(numericVars), 1),
+  p.mat = cor_pmat(numericVars),
+  colors = c("#25CB10", "white", "#FA7800"),
+  type="lower",
+  insig = "blank") +  
+  labs(title = "Figure. 1: Sale Price Correlation with Numeric Variables") +
+  plotTheme()
+```
+
+A normal distribution of variable observations is one of the assumptions of OLS regression. Below, we analyze the histograms of original data of selected variables and compare them to the log transformation of each. We see that the log transformed variable of price and lakes have a more normal distribution, meeting our assumption. We will use the log transformed data for these variables in our regression. 
+
+```{r log.transform, eval=TRUE, message=FALSE, warning=FALSE}
+
+#just a sample of the data we looked at to check to see if the distributions were normal. histograms of our dependent and predictor variables 
+HouseData$LNprice = log(HouseData$price+1)
+HouseData$LNlakes.nn <- log(HouseData$lakes.nn+1)
+HouseData$LNTotalSF <- log(HouseData$TotalFinishedSF+1)
+HouseData$LNAg <- log(HouseData$Ag.nn+1)
+HouseData$LNIndustry <- log(HouseData$Industrial.nn+1)
+
+```
+
+```{r hists, message=FALSE, warning=FALSE, fig.width = 10, fig.height= 8}
+#plot log transformed histograms
+histprice <- histogram( ~ price +LNprice,layout=c(2,1),data = HouseData,
+                      main='Distribution of Sale Price', xlab='Original Data (left) log transformed data (right)', col="#B3CDE3", breaks = 25, scales='free')
+
+histlake <- histogram( ~ lakes.nn +LNlakes.nn,layout=c(2,1),data = HouseData,
+                      main='Distribution of \nNearest Neighbor to Lakes', xlab='Original Data (left) log transformed data (right)', col="#B3CDE3", breaks = 25, scales='free')
+
+histSF <- histogram( ~ TotalFinishedSF +LNTotalSF,layout=c(2,1),data = HouseData,
+                      main='Distribution of \nTotal Square Footage', xlab='Original Data (left) log transformed data (right)', col="#B3CDE3", breaks = 25, scales='free')
+
+histAG <- histogram( ~ Ag.nn +LNAg,layout=c(2,1),data = HouseData,
+                      main='Distribution of \nNearest Neighbor to Agricultural Zoning', xlab='Original Data (left) log transformed data (right)', sub= 'Figure. 2', col="#B3CDE3", breaks = 25, scales='free')
+
+histI <- histogram( ~ Industrial.nn +LNIndustry,layout=c(2,1),data = HouseData,
+                      main='Distribution of \nNearest Neighbor to Industrial Zoning', xlab='Original Data (left) log transformed data (right)', col="#B3CDE3", breaks = 25, scales='free')
+
+grid.arrange(histprice, histlake, histSF, histI, ncol=2, nrow=2)
+```
+
+The scatter plots show us more details about the relationships between predictors and the dependent variable. In figures 3.1 - 3.4, we select a few variables from our correlation matrix to take a closer look at. The relationship between travel time to work and sale price per tract, as indicated by figure 3.1, shows us a slightly negative relationship, but also allows us to see the census tract where the homes have an above average travel time to work, and a relatively lower average house price. In addition, we see here, as the correlation matrix indicated, there is virtually no relationship between percent of homeowners who are married and a sale price. 
+
+Something particularly interesting is the linear relationship of percent white population and sale price. This relationship will display as high correlation on the matrix, but through the scatter plot we can see there are two outlying data points that may be mistakes. If we were to remove these outlying home sale price observations, our line of best fit would most likely still be positive but be a more realistic and accurate representation of the relationship of percent white to average house price per census tract. 
+
+```{r scatter.plots, results='hide', message=FALSE, warning=FALSE }
+
+#separating data between test set and training set
+knownSales <- HouseData %>%    
+  filter(.,toPredict == 0)
+toPredictSales <- HouseData %>%
+  filter(.,toPredict ==1)
+
+#SCATTER PLOTS
+#remove data observation that is out liar
+knownSales <- knownSales%>%
+  filter(MUSA_ID != 8197)
+
+#Pearson Correlation Tests and Linear Relationship Plots
+
+#bsmtSF
+cor.test(knownSales$bsmtSF, knownSales$price, method = "pearson")
+#marginal pearsons r of .21 but statistically significant
+
+bsmtSFplot <- ggplot(data = knownSales, aes(x = bsmtSF, y = price)) +
+  geom_point(size=2, shape=20)  +
+  labs(x = 'Basement Square Footage',
+       y = 'House Price',
+       title = "Basement Square Footage \nand Sale Price", 
+       subtitle = "Boulder County, CO",
+       caption = "Figure. 3.1") +
+  geom_smooth(method = "lm", se=F, colour = "green") +
+  plotTheme()
+
+#carStorageSF
+cor.test(knownSales$carStorageSF, knownSales$price, method = "pearson")
+#marginal correlation value of .25 but statistically significant
+
+carSFplot <- ggplot(data = knownSales, aes(x = carStorageSF, y = price)) +
+  geom_point(size=2, shape=20)  +
+  labs(x = 'Car Storage Square Footage',
+       y = 'House Price',
+       title = "Car Storage Square Footage \nand Sale Price", 
+       subtitle = "Boulder County, CO",
+       caption = "Figure. 3.2") +
+  geom_smooth(method = "lm", se=F, colour = "green") +
+  plotTheme()
+
+#total finished square footage 
+cor.test(knownSales$TotalFinishedSF, knownSales$price, method = "pearson")
+#pearsons r of .49 and statistically significant 
+
+TSFplot <- ggplot(data = knownSales, aes(x = TotalFinishedSF, y = price)) +
+  geom_point(size=2, shape=20)  +
+  labs(x = 'Total Finished Square Footage',
+       y = 'House Price',
+       title = "Total Finished Square Footage \nand Sale Price", 
+       subtitle = "Boulder County, CO",
+       caption = "Figure. 3.3") +
+  geom_smooth(method = "lm", se=F, colour = "green") +
+  plotTheme()
+
+#travel time and sale price correlation 
+cor.test(knownSales$TravelTime, knownSales$price, method = "pearson")
+#negative pearsons r - weak correlation but statistically significant
+
+TTplot <- ggplot(data = knownSales, aes(x = TravelTime, y = price)) +
+  geom_point(size=2, shape=20)  +
+  labs(x = 'Aggregate Travel Time to Work',
+       y = 'House Price',
+       title = "Travel Time to Work \nand Sale Price", 
+       subtitle = "Boulder County, CO",
+       caption = "Figure. 3.1") +
+  geom_smooth(method = "lm", se=F, colour = "orange") +
+  theme_ipsum_rc()
+#correlation has a slightly negative relationship. 
+
+#Median rent and home price
+cor.test(knownSales$MedRent, knownSales$price, method = "pearson")
+#weak correlation but statistically significant
+
+RentPlot <- ggplot(data = knownSales, aes(x = MedRent, y = price)) +
+  geom_point(size=2, shape=20)  +
+  labs(x = 'Median Rent',
+       y = 'House Price',
+       title = "Median Rent and Sale Price", 
+       subtitle = "Boulder County, CO",
+       caption = "Figure. 3.5") +
+  geom_smooth(method = "lm", se=F, colour = "green") +
+  plotTheme()
+
+#household income and home price
+cor.test(knownSales$MedHHInc, knownSales$price, method = "pearson")
+#marginal pearsons r of .18 and statistically significant 
+
+HHIncplot<- ggplot(data = knownSales, aes(x = MedHHInc, y = price)) +
+  geom_point(size=2, shape=20)  +
+  labs(x = 'Median Household Income',
+       y = 'House Price',
+       title = "Median Household Income \nand Sale Price", 
+       subtitle = "Boulder County, CO",
+       caption = "Figure. 3.2") +
+  geom_smooth(method = "lm", se=F, colour = "orange") +
+  theme_ipsum_rc()
+
+#percent married folks and home price
+cor.test(knownSales$PctMarried, knownSales$price, method = "pearson")
+#very weak correlation, almost none
+
+MarriedPlot <- ggplot(data = knownSales, aes(x = PctMarried, y = price)) +
+  geom_point(size=2, shape=20)  +
+  labs(x = 'Percent Married',
+       y = 'House Price',
+       title = "Percent of Homeowners with \nMarried Status and Sale Price", 
+       subtitle = "Boulder County, CO",
+       caption = "Figure. 3.3") +
+  geom_smooth(method = "lm", se=F, colour = "orange") +
+  theme_ipsum_rc()
+
+#plot percent white and home price
+cor.test(knownSales$PctWhite, knownSales$price, method = "pearson")
+#very weak correlation
+
+Whiteplot<-  ggplot(data = knownSales, aes(x = PctWhite, y = price)) +
+  geom_point(size=2, shape=20)  +
+  labs(x = 'Percent White',
+       y = 'House Price',
+       title = "Percent White Population \nand Sale Price", 
+       subtitle = "Boulder County, CO",
+       caption = "Figure. 3.4") +
+  geom_smooth(method = "lm", se=F, colour = "orange") +
+  theme_ipsum_rc()
+
+HouseData <- HouseData %>%
+  filter(MUSA_ID != 916)%>%filter(MUSA_ID != 4389)
+
+knownSales <- HouseData %>%    
+  filter(.,toPredict == 0)
+toPredictSales <- HouseData %>%
+  filter(.,toPredict ==1)
+
+```
+
+```{r scater.output, message=FALSE, warning=FALSE, fig.width = 12, fig.height=12}
+
+#show grid plot in markdown
+grid.arrange(TTplot, HHIncplot, MarriedPlot, Whiteplot, ncol=2, nrow =2)
+```
+
+The series of maps below further examines the relationships between variables, sale prices and space by plotting a radial buffer at quarter mile intervals from each geographical predictor, as well as plotting points which indicate house sales, where darker values represent higher sale prices. Buffers in red indicate variables we would expect to have a negative affect on house price. Buffers in green indicate variables we would expect to have a positive affect on house price. As we can see, not all of our expectations are met, which may have to do with other variables such as demographic or internal features. We will check the significance of these predictors in our regression model. (Note: The buffers on these maps are used only for visual purposes only and are not indicative of how we aggregated proximity to geographic features in our regression model. Again, we calculated the average distance to each feature of the 5 nearest neighbors for each home price, which is not illustrated by the map)
+
+```{r mappingdata, results='hide', message=FALSE, warning=FALSE}
+
+wfplot<- ggplot() +
+  geom_sf(data= tracts19, fill = 'grey99', color = 'black')+
+  geom_sf(data = Wildfire_History,fill = 'red',alpha = .75) +  
+  geom_sf(data = wf_buffer_25,fill = 'red',color = NA,alpha = .1) +
+  geom_sf(data = wf_buffer_5,fill = 'red',color = NA,alpha = .1) +
+  geom_sf(data = wf_buffer_75,fill = 'red',color = NA,alpha = .1) +
+  geom_sf(data = wf_buffer_1,fill = 'red',color = NA,alpha = .1) +
+  geom_sf(data = knownSales, aes(colour = q5(price)),
+          size = .4) +
+  scale_colour_manual(values = paletteMap)+
+  labs(title = "House Proximity to Wildfire Risk \nand Sale Price", 
+       subtitle = "Boulder County, CO",
+       caption = 'figure 4.1') +
+  mapTheme()+ theme_ipsum_rc()
+cor.test(knownSales$wildfire.nn, knownSales$price, method = "pearson")
+
+#Lakes Map
+lakeplot<- ggplot() +
+  geom_sf(data= tracts19, fill = 'grey99', color = 'black')+
+  geom_sf(data = Lakes_Reservoir, fill = 'green', alpha = .85) +  
+  geom_sf(data = lake_buffer_25,fill = 'green',color = NA,alpha = .1) +
+  geom_sf(data = lake_buffer_5,fill = 'green',color = NA,alpha = .1) +
+  geom_sf(data = lake_buffer_75,fill = 'green',color = NA,alpha = .1) +
+  geom_sf(data = lake_buffer_1,fill = 'green',color = NA,alpha = .1) +
+  geom_sf(data = knownSales, aes(colour = q5(price)),
+          size = .4) +
+  scale_colour_manual(values = paletteMap)+
+  labs(title = "House Proximity to Lakes and Reservoirs \nand Sale Price" ,
+       subtitle = "Boulder County, CO",
+       caption = 'figure 4.2') +
+  mapTheme()+theme_ipsum_rc()
+cor.test(knownSales$lakes.nn, knownSales$price, method = "pearson")
+
+#Geohazard Plot
+geoplot<- ggplot() +
+  geom_sf(data= tracts19, fill = 'grey99', color = 'black')+
+  geom_sf(data = GeoHazard, color= 'red', fill = 'red', alpha = .85) +  
+  geom_sf(data = geo_buffer_25,fill = 'red',color = NA,alpha = .1) +
+  geom_sf(data = geo_buffer_5,fill = 'red',color = NA,alpha = .1) +
+  geom_sf(data = geo_buffer_75,fill = 'red',color = NA,alpha = .1) +
+  geom_sf(data = geo_buffer_1,fill = 'red',color = NA,alpha = .1) +
+  geom_sf(data = knownSales, aes(colour = q5(price)),
+          size = .4) +
+  scale_colour_manual(values = paletteMap)+
+  labs(title = "House Proximity to Geological \nHazard Sites and Sale Price", 
+       subtitle = "Boulder County, CO",
+       caption = 'figure 4.3') +
+  mapTheme()+theme_ipsum_rc()
+cor.test(knownSales$geohazard.nn, knownSales$price, method = "pearson")
+
+
+#FloodRisk Plot
+floodplot<- ggplot() +
+  geom_sf(data= tracts19, fill = 'grey99', color = 'black')+
+  geom_sf(data = FloodZone,color = 'red',fill = 'red', alpha = .85) +  
+  geom_sf(data = fl_buffer_25,fill = 'red',color = NA,alpha = .1) +
+  geom_sf(data = fl_buffer_5,fill = 'red',color = NA,alpha = .1) +
+  geom_sf(data = fl_buffer_75,fill = 'red',color = NA,alpha = .1) +
+  geom_sf(data = fl_buffer_1,fill = 'red',color = NA,alpha = .1) +
+  geom_sf(data = knownSales, aes(colour = q5(price)),
+          size = .4) +
+  scale_colour_manual(values = paletteMap)+
+  labs(title = "House Proximity to Flood Zone \nand Sale Price", 
+       subtitle = "Boulder County, CO",
+       caption = 'figure 4.4') +
+  mapTheme()+theme_ipsum_rc()
+cor.test(knownSales$floodzone.nn, knownSales$price, method = "pearson")
+
+#Business and Commercial Zoning
+Businessplot<- ggplot() +
+  geom_sf(data= tracts19, fill = 'grey99', color = 'black')+
+  geom_sf(data = BusinessCommercial,color = 'green',fill = 'green', alpha = .85) +  
+  geom_sf(data = BC_buffer_25,fill = 'green',color = NA,alpha = .1) +
+  geom_sf(data = BC_buffer_5,fill = 'green',color = NA,alpha = .1) +
+  geom_sf(data = BC_buffer_75,fill = 'green',color = NA,alpha = .1) +
+  geom_sf(data = BC_buffer_1,fill = 'green',color = NA,alpha = .1) +
+  geom_sf(data = knownSales, aes(colour = q5(price)),
+          size = .4) +
+  scale_colour_manual(values = paletteMap)+
+  labs(title = "House Proximity to Business Zoning \nand Sale Price", 
+       subtitle = "Boulder County, CO",
+       caption = 'figure 4.5') +
+  mapTheme()+theme_ipsum_rc()
+cor.test(knownSales$Business.nn, knownSales$price, method = "pearson")
+
+#Industrial Zoning
+Industryplot<- ggplot() +
+  geom_sf(data= tracts19, fill = 'grey99', color = 'black')+
+  geom_sf(data = Industrial,color = 'red',fill = 'red', alpha = .85) +  
+  geom_sf(data = I_buffer_25,fill = 'red',color = NA,alpha = .1) +
+  geom_sf(data = I_buffer_5,fill = 'red',color = NA,alpha = .1) +
+  geom_sf(data = I_buffer_75,fill = 'red',color = NA,alpha = .1) +
+  geom_sf(data = I_buffer_1,fill = 'red',color = NA,alpha = .1) +
+  geom_sf(data = knownSales, aes(colour = q5(price)),
+          size = .4) +
+  scale_colour_manual(values = paletteMap)+
+  labs(title = "House Proximity to Industrial Zoning \nand Sale Price", 
+       subtitle = "Boulder County, CO",
+       caption = 'figure 4.6') +
+  mapTheme()+theme_ipsum_rc()
+cor.test(knownSales$Industrial.nn, knownSales$price, method = "pearson")
+
+#Agricultural zoning
+Agplot<- ggplot() +
+  geom_sf(data= tracts19, fill = 'grey99', color = 'black')+
+  geom_sf(data = Ag,color = 'green',fill = 'green', alpha = .85) +  
+  geom_sf(data = AG_buffer_25,fill = 'green',color = NA,alpha = .1) +
+  geom_sf(data = AG_buffer_5,fill = 'green',color = NA,alpha = .1) +
+  geom_sf(data = AG_buffer_75,fill = 'green',color = NA,alpha = .1) +
+  geom_sf(data = AG_buffer_1,fill = 'green',color = NA,alpha = .1) +
+  geom_sf(data = knownSales, aes(colour = q5(price)),
+          size = .4) +
+  scale_colour_manual(values = paletteMap)+
+  labs(title = "House Proximity to Agriculture\nand Sale Price", 
+       subtitle = "Boulder County, CO",
+       caption = 'figure 4.7') +
+  mapTheme()+theme_ipsum_rc()
+cor.test(knownSales$Ag.nn, knownSales$price, method = "pearson")
+
+#Streams Plot
+#streamplot<- ggplot() +
+#  geom_sf(data= tracts19, fill = 'grey99', color = 'black')+
+#  geom_sf(data = Streams,
+#          fill = 'red',
+#          alpha = .85) +  
+#  geom_sf(data = Streams_buffer,
+#          fill = 'red',
+#          color = 'red',
+#          alpha = .15) +
+#  geom_sf(data = knownSales, aes(colour = q5(price)),
+#          size = .4) +
+#  scale_colour_manual(values = paletteMap)+
+#  labs(title = "1/4 mi Stream Buffer and Home Sale Price", 
+#       subtitle = "Boulder County, CO",
+#       caption = 'figure #') +
+#  mapTheme()+plotTheme()
+```
+
+```{r maps, message=FALSE, warning=FALSE, fig.width=14, fig.height = 42, fig.align ='center'}
+
+#show grid maps in markdown
+grid.arrange(wfplot, geoplot, 
+             floodplot,lakeplot, Businessplot, Industryplot, 
+             Agplot, ncol=1, nrow =7)
+```
+
+***
+## **III. Methods**
+
+Before we can begin to test regressions, we remove outliers revealed by our exploratory analysis, select relevant variables and engineer features to optimize our model. We can begin testing regressions to see which features have the best predictive power of our dependent variable. Our model includes internal house features, census tract data, and spatial features from Boulder County open data. We divide our observed home sale prices into a training and a test set and train our model with our predictors. We then run our model on the test data set which allows us to compare our models home sale prices to actual observed home sale prices. This will indicate where we can adjust features to improve our model.
+
+```{r regression, eval=TRUE, results='hide', message=FALSE, warning=FALSE}
+#Building Regression Model
+knownSales$LNlakes.nn <- log(knownSales$lakes.nn+1)
+knownSales_nog <- st_drop_geometry(knownSales)
+
+reg <- lm(LNprice ~ MedRent+ HouseAge+ PctMarried+BelPov100+wildfire.nn+geohazard.nn
+          +LNlakes.nn+floodzone.nn+Ag.nn+Business.nn+LNIndustry+NumTrailHeads+bsmtSF+HeatingDscr+TotalBach+MedHHInc+TravelTime+nbrBedRoom+qualityCodeDscr+LNTotalSF+designCodeDscr, 
+          data = knownSales_nog)
+
+#separate the test and training sets
+inTrain <- createDataPartition(
+  y = paste(knownSales$qualityCodeDscr, knownSales$designCodeDscr, knownSales$HeatingDscr),
+  p = .60, list = FALSE)
+boulder.training <- knownSales[inTrain,]
+boulder.test <- knownSales[-inTrain,]  
+
+#training regression
+reg.training <-lm(LNprice ~ MedRent+ HouseAge+ PctMarried+BelPov100+wildfire.nn+geohazard.nn
+                  +LNlakes.nn+floodzone.nn+Ag.nn+Business.nn+LNIndustry+NumTrailHeads+bsmtSF+HeatingDscr+TotalBach+
+                    MedHHInc+TravelTime+nbrBedRoom+qualityCodeDscr+
+                    LNTotalSF+designCodeDscr, data = boulder.training)
+```
+
+***
+## **IV. Results**
+
+Table 2 describes our training regression results. an R^2^ of 0.7 indicates 70% of the variance in the sale price predictions is explained by the model. This is a relatively good statistic. Low p values in the majority of our predictors indicate statistical significance of the associated coefficients. The code chunk below Table 2 calculates the average sale price, the sale price mean absolute error (MAE), and the mean absolute percent error (MAPE) of our test regression. 
+
+```{r train.output, message=FALSE, warning=FALSE, fig.width=8, fig.height=8}
+stargazer::stargazer(reg.training,
+                     digits=1,
+                     header = FALSE,
+                     single.row = TRUE,
+                     title="Table 2: Training Regression Results",
+                     type='text')
+
+```
+
+```{r test.reg, message=FALSE, warning=FALSE}
+#test regression on boulder.test
+#transform the dependent variable back to standard units
+boulder.test <-
+  boulder.test %>%
+  mutate(Regression = "Baseline Regression",
+         SalePrice.Predict = exp(predict(reg.training, boulder.test)),
+         SalePrice.Error = SalePrice.Predict - price,
+         SalePrice.AbsError = abs(SalePrice.Predict - price),
+         SalePrice.APE = (abs(SalePrice.Predict - price)) / SalePrice.Predict)%>%
+  filter(price < 4000000)
+
+mean(boulder.test$SalePrice.Predict, na.rm = T) 
+#[1] 702689.4 average home sale price in the test set is $702,689.4 
+
+mean(boulder.test$SalePrice.AbsError, na.rm = T)
+#[1] 132808.1 - average absolute error is $160,063.7
+
+mean(boulder.test$SalePrice.APE, na.rm = T)
+#[1]  0.1757006 - average absolute percent error is 17.57 % - model errs by 17.57%
+
+```
+
+As we see in our descriptive statistics table, the average observed home sale price is \$746,382.6. the output above tells us that our model predicts the average to be \$702,567.9. We also see that the average percent error is 17.8%, which is relatively accurate. On average, our model predicts $135,123 from the actual sale price. 
+
+##### **Generalizibility**
+
+We want to be sure our model is generalizing well. If our model is generalizable, we can confidently say the model will predict accurately across different groups, like houses and neighborhoods. To test this we run a k-fold cross validation test, where k = 100. This process splits our data set into 100 groups and measures the model's goodness of fit across all 100 folds, thus quantifying it's generalizability. The non-normal distribution of model errors in figure 5 indicate that the model may not be very generalizable. This is important to acknowledge moving forward. Table 3 gives the results of the test set of fold #71. We are able to see the R^2^ is higher than that of the entire model, and the MAE is pretty low at 12.9%, however this is just the result of one fold, and the histogram depicts a more accurate representation of how our model is performing.
+
+```{r reg.cv, results='hide', message=FALSE, warning=FALSE}
+#Test Generalizability
+fitControl <- trainControl(method = "cv", number = 100)
+set.seed(825)
+
+reg.cv <- 
+  train(LNprice ~ MedRent+ HouseAge+ PctMarried+BelPov100+wildfire.nn+geohazard.nn
+        +LNlakes.nn+floodzone.nn+Ag.nn+Business.nn+Industrial.nn+NumTrailHeads+bsmtSF+HeatingDscr+TotalBach+
+          MedHHInc+TravelTime+nbrBedRoom+qualityCodeDscr+
+          TotalFinishedSF+designCodeDscr, data = st_drop_geometry(knownSales),
+        method = "lm", trControl = fitControl, na.action = na.pass)
+
+reg.cv$resample[]
+
+
+
+reg.cv.rs.min <- reg.cv$resample[71,]
+
+```
+
+```{r reg.cv.plot, message=FALSE, warning=FALSE, fig.width = 8, fig.height=8}
+
+reg.cv.rs.min %>%                     
+  gather(Variable, Value) %>%
+  group_by(Variable) %>%
+  spread(Variable, Value) %>%
+  kable(caption = "Table 3: Regression Results of One Test Set") %>%
+  kable_classic(full_width = F, html_font = "Helvetica")
+
+ggplot(reg.cv$resample, aes(x=MAE)) +
+  geom_histogram() +
+  labs(title = "Mean Average Error in Cross Validation Tests",
+       caption = "Figure.ue 5") +
+  theme_ipsum_rc()
+```
+
+##### **Spatial Clustering of Errors**
+
+In this step we check to see if the residuals are clustered in space. Figure 6 plots our errors in space, which appear to be randomly distributed across census tracts, which may suggest that low generalizability is potentially unrelated to spatial processes. Figure 7 depicts a scatter plot of the spatial lag of price errors. The plot shows that as price decreases, the average spatial lag of the 5 nearest neighbor to that home price increases. 
+
+```{r map.resid, results='hide', message=FALSE, warning=FALSE}
+#Map of test set residuals
+library(modelr)
+
+boulder.test$resid <- 
+  boulder.test %>%
+  as_data_frame() %>%
+  add_residuals(., reg.training, var = "resid") %>%
+  dplyr::select(resid) %>%
+  pull(resid)
+
+  ggplot() +
+  geom_sf(data= tracts19, fill = 'grey99', color = 'black')+
+    geom_sf(data = boulder.test, aes(colour = q5(resid)), alpha = .25, size = 1) +
+    scale_colour_manual(values = palette5) +
+   labs(title = "Test Set Residual Errors",
+        subtitle = "Boulder County, CO",
+        caption = "Figure. 6") +
+    theme_ipsum_rc()
+
+```
+
+```{r spatial.clust, results='hide', message=FALSE, warning=FALSE}
+#Test Spatial Clustering
+
+coords <- st_coordinates(knownSales)
+neighborList <- knn2nb(knearneigh(coords, 5)) #5 nearest neighborhoods
+spatialWeights <- nb2listw(neighborList, style="W") #not sure what is W here
+knownSales$lagPrice <- lag.listw(spatialWeights, knownSales$price)
+
+coords.test <-  st_c(boulder.test) 
+neighborList.test <- knn2nb(knearneigh(coords.test, 5))
+spatialWeights.test <- nb2listw(neighborList.test, style="W")
+
+```
+
+```{r spatial.clust.plot, message=FALSE, warning=FALSE, fig.width=8}
+
+
+boulder.test %>%                
+  mutate(lagPriceError = lag.listw(spatialWeights.test, SalePrice.Error)) %>%  
+  ggplot(aes(lagPriceError, price)) +
+  geom_point(size=2, shape=20, color = 'orange') +
+  stat_smooth(aes(lagPriceError, price), 
+             method = "lm", se = FALSE, size = 1, colour="green")+
+  labs(x = 'Spatial lag of errors (Mean error of 5 nearest neighors)',
+       y = 'Sale Price',
+    title = "Spatial Lag of Price Errors",
+    caption = "Figure. 7") +
+   theme_ipsum_rc() 
+
+```
+
+Moran's I is a statistic which indicates the presence of spatial autocorrelation. The statistic alone is not intuitive to interpret, so we then perform a test which calculates 999 random permutations. We compare our model's Moran's I statistic to the result of the random permutations to see the probability of getting a Moran's I as high or as low as ours if there is in fact no spatial autocorrelation of our dependent variable. The histogram in figure 8 shows us that our Moran's I is just over 2.5, higher than all of the 999 randomly generated I's, which means there is strong evidence of clustered spatial autocorrelation of our errors, this means the variation in price is likely related to the spatial process 
+
+```{r morans.I, message=FALSE, warning=FALSE, Figure..width = 8, Figure..height = 8}
+#interpret
+
+moranTest <- moran.mc(boulder.test$SalePrice.Error, 
+                      spatialWeights.test, nsim = 999)
+
+ggplot(as.data.frame(moranTest$res[c(1:999)]), aes(moranTest$res[c(1:999)])) +
+  geom_histogram(binwidth = 0.01) +
+  geom_vline(aes(xintercept = moranTest$statistic), colour = "#FA7800",size=1) +
+  scale_x_continuous(limits = c(-1, 1)) +
+  labs(title="Observed and permuted Moran's I",
+       subtitle= "Observed Moran's I in orange",
+       x="Moran's I",
+       y="Count",
+       caption = "Figure. 8") +
+  theme_ipsum_rc()
+
+#histogram to show frequency of all 999 randomly permutated I 
+#the observed I is higher than all 999 randomly generated I's suggests 
+#strong evidence for spatial autocorrelation. 
+#both spatial lag test and moran's I confirm spatial autocorrelation - this
+#suggests that variation in price likely related to the spatial process
+#has been omitted from our current model
+```
+
+##### **Accounting For Spatial Process**
+
+The next step of this analysis is to incorporate the neighborhood fixed effect into our model to account for the spatial process at the neighborhood scale. In this analysis we use Census tracts as "neighborhoods." We acknowledge this may not be the most accurate indicator of spatial autocorrelation because we know that census tracts are arbitrarily drawn. Table 4 shows average price and average prediction for each census tract in Boulder County. 
+
+```{r tract.join, message=FALSE, warning=FALSE, Figure..width = 8, Figure..height = 8}
+#Neighorhood Fixed Effect - accounting for the neighborhood
+#Join bytract since we dont have neighborhood data
+
+left_join(
+  st_drop_geometry(boulder.test) %>%
+    group_by(GEOID) %>%
+    summarize(meanPrice = mean(price, na.rm = T)),
+  mutate(boulder.test, predict.fe = 
+           predict(lm(price ~ GEOID, data = boulder.test), 
+                   boulder.test)) %>%
+    st_drop_geometry %>%
+    group_by(GEOID) %>%
+    summarize(meanPrediction = mean(predict.fe))) %>%
+  kable(caption = "Table 4") %>% kable_styling('striped', html_font = 'helvetica')
+
+```
+
+```{r n.train, results='hide', message=FALSE, warning=FALSE }
+reg.tract <- lm(LNprice ~ ., data = as.data.frame(boulder.training) %>% 
+                  dplyr::select(LNprice, GEOID, MedRent, HouseAge, PctMarried, BelPov100, wildfire.nn, geohazard.nn,
+                                LNlakes.nn, floodzone.nn, Ag.nn, Business.nn, Industrial.nn, NumTrailHeads, 
+                                bsmtSF, HeatingDscr, TotalBach,
+                                MedHHInc, TravelTime, nbrBedRoom, qualityCodeDscr,
+                                TotalFinishedSF, designCodeDscr))
+  
+summary(reg.tract)
+boulder.test.tract <-
+  boulder.test %>%
+  mutate(Regression = "Neighborhood Effects",
+         SalePrice.Predict = exp(predict(reg.tract, boulder.test)),
+         SalePrice.Error = SalePrice.Predict - price,
+         SalePrice.AbsError = abs(SalePrice.Predict - price),
+         SalePrice.APE = (abs(SalePrice.Predict - price)) / SalePrice.Predict)%>%
+  filter(price < 4000000)
+```
+
+We run a new regression which uses Census tract as a predictor of home sale price. Figure 9 indicates our model is pretty accurate, but there is marginal improvement after adding the spatial component Where the orange line represents a perfect prediction and the green line represents our model's prediction. Table 5 better describes the difference between our baseline model and the neighborhood effects model. Using the neighborhood fixed effects model, the absolute error of our predicted sale price decreases by about $20,000, which tells us the model has improved. We also see our mean absolute percent error(MAPE) decreases by 2.5%, also a good sign.
+
+```{r compare.reg, message=FALSE, warning=FALSE, Figure..width = 8, Figure..height = 2}
+bothRegressions <- 
+  rbind(
+    dplyr::select(boulder.test, starts_with("SalePrice"), price, Regression, GEOID) %>%
+      mutate(lagPriceError = lag.listw(spatialWeights.test, SalePrice.Error)),
+    dplyr::select(boulder.test.tract, starts_with("SalePrice"), price, Regression, GEOID) %>%
+      mutate(lagPriceError = lag.listw(spatialWeights.test, SalePrice.Error)))
+
+bothRegressions %>%
+  dplyr::select(SalePrice.Predict,price, Regression) %>%
+  ggplot(aes(price, SalePrice.Predict)) +
+  geom_point(size = 1) +
+  stat_smooth(aes(price, price), 
+              method = "lm", se = FALSE, size = 1, colour="#FA7800") + 
+  stat_smooth(aes(SalePrice.Predict, price), 
+              method = "lm", se = FALSE, size = 1, colour="#25CB10") +
+  facet_wrap(~Regression) +
+  labs(title="Predicted sale price as a function of observed price",
+       subtitle="Orange line represents a perfect prediction; Green line represents prediction",
+       caption = "Figure: 9") +
+  theme_ipsum_rc()
+
+both.reg <- st_drop_geometry(bothRegressions) %>%
+  gather(Variable, Value, -Regression, -GEOID) %>%
+  filter(Variable == "SalePrice.AbsError" | Variable == "SalePrice.APE") %>%
+  group_by(Regression, Variable) %>%
+  summarize(meanValue = mean(Value, na.rm = T)) %>%
+  spread(Variable, meanValue) %>%
+  kable(caption = "Table 5")%>%kable_styling()
+both.reg
+
+```
+
+Figure 10 illustrates clustering of our predicted home prices in and around downtown Boulder, wich follows the same patterns as the known home sale prices. Figure 11 depicts the spatial distribution of our model's errors. We can see from this map, that the mean average percentage error is highest both where home prices are higher, and also in the large tracts to the west which represent primarily undeveloped mountainous park land. This could be explained by the wide range of home sale prices in these tracts because of the comparative size. Figure 12 further illustrates the varying relationships between MAPE and mean house price by census tract. From this chart, we may be able to say as Mean price by census tract increases, the MAPE by census tract slightly increases as well. With the MAPE being inconsistent across Census tracts and associated average home sale prices, we may say this is further evidence that our model is not as generalizable as it could be.
+
+```{r house.predict, message=FALSE, warning=FALSE, fig.height=8, fig.height = 8}
+
+housesPredictions <-                   
+  HouseData %>%
+  mutate(prediction = exp(predict(reg.tract, HouseData)),
+         team_name = 'HROS')
+
+predictions <- housesPredictions[,c("prediction", "team_name", "toPredict")] %>%
+  st_drop_geometry() %>%
+  filter(toPredict == 1) %>%
+  dplyr::select(-toPredict)
+
+predictplot<- ggplot() +
+  geom_sf(data= tracts19, fill = 'grey99', color = 'black')+
+  geom_sf(data = housesPredictions, aes(colour = q5(prediction)))+ 
+  scale_colour_manual(values = paletteMap)+
+  labs(title = "Predicted Sale Price Values", 
+       subtitle = "Boulder County, CO",
+       caption = 'Figure. 10') +
+  mapTheme()+theme_ipsum_rc()
+
+predictplot
+```
+
+```{r house.MAPE, message=FALSE, warning=FALSE, fig.height=8, fig.height = 8}
+st_drop_geometry(bothRegressions) %>%
+  group_by(Regression, GEOID)%>%
+  summarise(mean.MAPE = mean(SalePrice.APE, na.rm = T)) %>%
+  ungroup() %>%
+  left_join(tracts19) %>%
+  st_as_sf() %>%
+  ggplot() +
+  geom_sf(colour = "gray", aes(fill = q5(mean.MAPE))) +
+  scale_fill_manual(values = paletteMap) +
+  labs(title = "Mean Average Percentage Error by Neighborhood",
+       subtitle = "Boulder County, CO",
+       caption = "Figure. 11") +
+  mapTheme()
+
+```
+
+```{r scatter.MAPE, message=FALSE, warning=FALSE, fig.height=8, fig.height = 8}
+scatter_tracts <-
+  boulder.test.tract %>%
+  group_by(GEOID) %>%
+  dplyr::select(GEOID, SalePrice.APE, SalePrice.Predict)
+
+mean_sca_t <-
+  scatter_tracts %>%
+  group_by(GEOID) %>%
+  summarise_at(vars("SalePrice.APE", "SalePrice.Predict"), mean)
+
+ggplot()+
+  geom_point(data = mean_sca_t, 
+             aes(SalePrice.Predict,SalePrice.APE),
+             size = 2,
+             color = "#003A6B" )+
+  labs(x = 'Mean Price by Census Tract',
+       y = 'MAPE by Census Tract',
+       title = "MAPE by Census Tract and Mean Price by Census Tract", 
+       subtitle = "Boulder County, CO",
+       caption = "Figure. 12") + 
+  theme_ipsum_rc()
+
+```
+
+We next look at how well our model predicts prices across different racial and income contexts. Boulder County, as illustrated in figure 13, has very low variety in racial and socioeconomic diversity. We would ideally split the census tracts at a 50% threshold to indicate majority white and majority non-white, however, data indicates that every census tract in Boulder County is majority white. For the purpose of testing our model on racial context, we set the threshold at at least 80% White. Figure 13 shows the race context, and also indicates the majority of tracts are in the "High Income" category, which is defined by having an average household income above the US average household income of $65,000. Tables 6 and 7 show us that while the neighborhood effects model still has better overall predictive power, both models have a higher MAPE in Census tracts with an average household income lower than the US average. It is also interesting to note that the neighborhood effects model has the same MAPE in tracts differentiated by their racial context.
+
+```{r race.income.context,message=FALSE, warning=FALSE, fig.height=8, fig.height = 6 }
+
+tracts19<- tracts19%>%
+  mutate(raceContext = ifelse(PctWhite > .8, "At least \n80% White", "At most 20% \nNon-White"),
+       incomeContext = ifelse(MedHHInc > 65000, "High Income", "Low Income"))
+
+grid.arrange(ncol = 2,
+             ggplot() + geom_sf(data = na.omit(tracts19), aes(fill = raceContext)) +
+               scale_fill_manual(values = c("#25CB10", "#FA7800"), name="Race Context") +
+               labs(title = "Race Context") +
+               mapTheme() + theme(legend.position="bottom"), 
+             ggplot() + geom_sf(data = na.omit(tracts19), aes(fill = incomeContext)) +
+               scale_fill_manual(values = c("#25CB10", "#FA7800"), name="Income Context") +
+               labs(title = "Income Context",
+                    caption = "Figure. 13") +
+               mapTheme() + theme(legend.position="bottom"))
+```
+
+```{r race.context,message=FALSE, warning=FALSE, fig.height=8, fig.height = 8}
+st_join(bothRegressions, tracts19) %>% 
+  group_by(Regression, raceContext) %>%
+  summarize(mean.MAPE = scales::percent(mean(SalePrice.APE, na.rm = T))) %>%
+  st_drop_geometry() %>%
+  spread(raceContext, mean.MAPE) %>%
+  kable(caption = "Table 6: Test set MAPE by neighborhood racial context")%>%kable_styling()
+```
+
+```{r income.context,message=FALSE, warning=FALSE, fig.height=8, fig.height = 8}
+st_join(bothRegressions, tracts19) %>% 
+  filter(!is.na(incomeContext)) %>%
+  group_by(Regression, incomeContext) %>%
+  summarize(mean.MAPE = scales::percent(mean(SalePrice.APE, na.rm = T))) %>%
+  st_drop_geometry() %>%
+  spread(incomeContext, mean.MAPE) %>%
+  kable(caption = "Table 7: Test set MAPE by neighborhood income context")%>%kable_styling()
+```
+***
+## **V. Discussion & Conclusion**
+
+We have wrangled and included a range of variables from demographic to geographic which have proved to have an impact on home sale price. As predicted the housing costs are higher closer to the Boulder downtown, Lakes, reservoirs and industrial areas but relatively low and have a negative relation to  areas closer to wild fire and geo-hazard areas. Given the MAEP is relatively low for both low income and high income group, with low income having slightly higher error. We think that might be due to the bias of the study area, which is a very wealthy county.
+
+Overall, our model is relatively effective at predicting home sale prices, however it does not appear to be generalizable which is a crucial part of making sure our model performs accurately across both space and time. From the results of this analysis, we believe there should be more iterations of this model produced before it is utilized as a business algorithm. There are other models we may use to predict home prices which account for the spatial processes happeneing within our dependent variable and our independent predictions, which should be considered in further analysis of building the optimal model for Zillow to use. 
+
+
+
+
